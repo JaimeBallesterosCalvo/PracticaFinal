@@ -1,0 +1,17 @@
+REGISTER usuario1
+REGISTER usuario1
+UNREGISTER usuario1
+UNREGISTER usuario_no_existente
+REGISTER usuario2
+CONNECT usuario2
+CONNECT usuario2
+DISCONNECT usuario2
+DISCONNECT usuario_no_conectado
+REGISTER usuario3
+PUBLISH /home/usuario1/docs/file2.txt Descripción normal
+CONNECT usuario3
+PUBLISH /home/usuario1/docs/file2.txt Descripción normal
+PUBLISH /home/usuario1/docs/file2.txt Duplicado
+DELETE /home/usuario1/docs/file2.txt
+DELETE archivo_inexistente.txt
+QUIT

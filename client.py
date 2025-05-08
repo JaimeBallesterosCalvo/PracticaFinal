@@ -268,7 +268,7 @@ class client :
                 descripcion_pub,
                 puerto
             )
-
+            
             # 3. Enviar y recibir respuesta
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.connect((client._server, client._port))

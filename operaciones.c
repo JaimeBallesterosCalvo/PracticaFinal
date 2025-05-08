@@ -198,6 +198,7 @@ int disconnect_user(const char* username) {
 }
 
 //esta es la acción de publicar un documento
+// Función para publicar un documento (sin crear el archivo físicamente)
 int publish_file(const char* username, const char* filename, const char* descripcion) {
 
     // 1. Verificar si el usuario existe
@@ -232,7 +233,7 @@ int publish_file(const char* username, const char* filename, const char* descrip
         fclose(meta_fd);
     }
 
-    // 4. Registrar en metadata
+    // 4. Registrar en metadata (¡única acción persistente!)
     if ((meta_fd = fopen(meta_path, "a")) == NULL) {
         fprintf(stderr, "PUBLISH FAIL\n");
         return 4;
@@ -240,14 +241,6 @@ int publish_file(const char* username, const char* filename, const char* descrip
 
     fprintf(meta_fd, "%s|%s\n", filename, descripcion);
     fclose(meta_fd);
-
-    // 5. Crear archivo vacío
-    char file_path[MAX_PATH];
-    snprintf(file_path, sizeof(file_path), "%s/%s/%s", BASE_DIR, username, filename);
-    if (creat(file_path, 0644) == -1) {
-        fprintf(stderr, "PUBLISH FAIL\n");
-        return 4;
-    }
 
     fprintf(stdout, "PUBLISH OK\n");
     return 0;
@@ -259,28 +252,20 @@ int delete_file(const char* username, const char* filename) {
     if (!user_exists(username)) {
         fprintf(stderr, "DELETE FAIL, USER DOES NOT EXIST\n");
         pthread_mutex_unlock(&claves_mutex);
-        return 1; // USER DOES NOT EXIST
+        return 1;
     }
 
     // 2. Verificar si el usuario está conectado
     if (!is_user_connected(username)) {
         fprintf(stderr, "DELETE FAIL, USER NOT CONNECTED\n");
-        return 2; // USER NOT CONNECTED
+        return 2;
     }
 
-    // 3. Verificar si el archivo existe en metadata y físicamente
-    char file_path[MAX_PATH], meta_path[MAX_PATH], temp_path[MAX_PATH];
-    snprintf(file_path, sizeof(file_path), "%s/%s/%s", BASE_DIR, username, filename);
+    // 3. Verificar si el archivo existe en el metadata
+    char meta_path[MAX_PATH], temp_path[MAX_PATH];
     snprintf(meta_path, sizeof(meta_path), "%s/%s/metadata.txt", BASE_DIR, username);
     snprintf(temp_path, sizeof(temp_path), "%s/%s/metadata.tmp", BASE_DIR, username);
 
-// Verificar existencia física del archivo
-    if (access(file_path, F_OK) != 0) {
-        fprintf(stderr, "DELETE FAIL, CONTENT NOT PUBLISHED\n");
-        return 3; // CONTENT NOT PUBLISHED
-    }
-
-// Verificar existencia en metadata
     int found_in_metadata = 0;
     FILE *meta_fd = fopen(meta_path, "r");
     if (meta_fd) {
@@ -299,23 +284,17 @@ int delete_file(const char* username, const char* filename) {
 
     if (!found_in_metadata) {
         fprintf(stderr, "DELETE FAIL, CONTENT NOT PUBLISHED\n");
-        return 3; // CONTENT NOT PUBLISHED
+        return 3;
     }
 
-// 4. Borrar archivo físico
-    if (remove(file_path) != 0) {
-        fprintf(stderr, "DELETE FAIL\n");
-        return 4; // OTHER ERROR
-    }
-
-    // 5. Actualizar metadata (eliminar la entrada del archivo)
+    // 4. Actualizar metadata (eliminar la entrada)
     meta_fd = fopen(meta_path, "r");
     FILE *temp_fd = fopen(temp_path, "w");
     if (meta_fd == NULL || temp_fd == NULL) {
         if (meta_fd) fclose(meta_fd);
         if (temp_fd) fclose(temp_fd);
         fprintf(stderr, "DELETE FAIL\n");
-        return 4; // OTHER ERROR
+        return 4;
     }
 
     char line[MAX_LINE];
@@ -335,8 +314,8 @@ int delete_file(const char* username, const char* filename) {
     remove(meta_path);
     rename(temp_path, meta_path);
 
-    fprintf(stdout, "DELETE OK\n");
-    return 0; // SUCCESS
+    fprintf(stdout, "DELETE OK (solo metadata)\n");
+    return 0;
 }
 
 //operacion de obtener una lista con todos los usuarios
