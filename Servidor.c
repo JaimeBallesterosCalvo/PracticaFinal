@@ -23,6 +23,7 @@ void *atender_cliente(void *arg) {
 
     peticion p;
     respuesta r;
+    int user_count;
     memset(&r, 0, sizeof(r)); // se inicializa la respuesta con valores 0
 
     // 1. Recibir petición y hacer unmarshalling
@@ -121,15 +122,29 @@ void *atender_cliente(void *arg) {
 
         case OP_LIST_USERS:
             pthread_mutex_lock(&claves_mutex);
-            r.num_elementos = list_users(p.usuario, r.datos, sizeof(r.datos));
-            r.codigo = (r.num_elementos >= 0) ? 0 : 1;
+            user_count = list_users(p.usuario, r.datos, sizeof(r.datos));
+            if (user_count < 0) {
+                r.codigo = -user_count; // Convierte códigos negativos a positivos
+                r.num_elementos = 0;
+            } else {
+                r.codigo = 0;
+                r.num_elementos = htonl(user_count);
+                fprintf(stdout, "LIST_USERS OK\n");
+            }
             pthread_mutex_unlock(&claves_mutex);
             break;
 
         case OP_LIST_CONTENT:
             pthread_mutex_lock(&claves_mutex);
-            r.num_elementos = list_content(p.usuario, p.usuario, r.datos, sizeof(r.datos));
-            r.codigo = (r.num_elementos >= 0) ? 0 : 1;
+            int content_count = list_content(p.usuario, p.target_user, r.datos, sizeof(r.datos));
+            if (content_count < 0) { // Si usaras códigos de error negativos
+                r.codigo = -content_count;
+                r.num_elementos = 0;
+            } else {
+                r.codigo = 0;
+                r.num_elementos = htonl(content_count);
+                fprintf(stdout, "LIST_CONTENT OK\n");
+            }
             pthread_mutex_unlock(&claves_mutex);
             break;
 

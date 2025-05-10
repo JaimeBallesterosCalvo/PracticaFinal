@@ -110,7 +110,6 @@ int unregister_user(const char* username) {
     // Comprueba que el usuario existe en el directorio
     if (!user_exists(username)) {
         fprintf(stderr,"s> USER DOES NOT EXIST\ns> ");
-        pthread_mutex_unlock(&claves_mutex);
         return 1;
     }
 
@@ -251,7 +250,6 @@ int delete_file(const char* username, const char* filename) {
     // 1. Verificar si el usuario existe
     if (!user_exists(username)) {
         fprintf(stderr, "DELETE FAIL, USER DOES NOT EXIST\n");
-        pthread_mutex_unlock(&claves_mutex);
         return 1;
     }
 
@@ -314,24 +312,21 @@ int delete_file(const char* username, const char* filename) {
     remove(meta_path);
     rename(temp_path, meta_path);
 
-    fprintf(stdout, "DELETE OK (solo metadata)\n");
+    fprintf(stdout, "DELETE OK\n");
     return 0;
 }
 
-//operacion de obtener una lista con todos los usuarios
 int list_users(const char* requesting_user, char* buffer, int buffer_size) {
-    pthread_mutex_lock(&claves_mutex);
-
-    if (!user_exists(requesting_user) ) {
-        fprintf(stderr, "LIST_USERS FAIL , USER DOES NOT EXIST\n");
-        pthread_mutex_unlock(&claves_mutex);
-        return 1;
+    // 1. Verificar existencia del usuario
+    if (!user_exists(requesting_user)) {
+        fprintf(stderr, "[ERROR] LIST_USERS: Usuario %s no existe\n", requesting_user);
+        return -1;
     }
 
+    // 2. Verificar si está conectado
     if (!is_user_connected(requesting_user)) {
-        fprintf(stderr, "LIST_USERS FAIL , USER NOT CONNECTED \n");
-        pthread_mutex_unlock(&claves_mutex);
-        return 2;
+        fprintf(stderr, "[ERROR] LIST_USERS: Usuario %s no conectado\n", requesting_user);
+        return -2;
     }
 
     DIR *dir;
@@ -339,128 +334,136 @@ int list_users(const char* requesting_user, char* buffer, int buffer_size) {
     int count = 0;
     int total_written = 0;
 
-    // Inicializar buffer con el encabezado OK
+    // 3. Escribir encabezado
     int header_written = snprintf(buffer, buffer_size, "LIST_USERS OK\n");
+    if (header_written < 0 || header_written >= buffer_size) {
+        fprintf(stderr, "[ERROR] LIST_USERS: Buffer lleno (encabezado)\n");
+        return -3;
+    }
+
     buffer += header_written;
     buffer_size -= header_written;
     total_written += header_written;
 
-    if ((dir = opendir(BASE_DIR)) == NULL) {
-        fprintf(stderr, "LIST_USERS FAIL\n");
-        pthread_mutex_unlock(&claves_mutex);
-        return 3; // OPERATION FAILED
+    // 4. Abrir directorio base
+    dir = opendir(BASE_DIR);
+    if (!dir) {
+        fprintf(stderr, "[ERROR] LIST_USERS: No se pudo abrir %s\n", BASE_DIR);
+        return -3;
     }
 
+    // 5. Leer usuarios
     while ((ent = readdir(dir)) != NULL && buffer_size > 0) {
-        if (ent->d_type == DT_DIR && strcmp(ent->d_name, ".") != 0 && strcmp(ent->d_name, "..") != 0) {
-            // Solo listar usuarios conectados
-            if (is_user_connected(ent->d_name)) {
-                char ip[INET_ADDRSTRLEN];
-                int puerto;
-                char conn_path[MAX_PATH];
-                snprintf(conn_path, sizeof(conn_path), "%s/%s/connection.txt", BASE_DIR, ent->d_name);
+        printf("[DEBUG] Procesando entrada: %s\n", ent->d_name); // <--- Debug añadido
 
-                FILE *conn_fd = fopen(conn_path, "r");
-                if (conn_fd) {
-                    if (fscanf(conn_fd, "%s\n%d", ip, &puerto) == 2) {
-                        int written = snprintf(buffer, buffer_size, "%s %s %d\n", ent->d_name, ip, puerto);
-                        if (written < 0 || written >= buffer_size) {
-                            fclose(conn_fd);
-                            closedir(dir);
-                            pthread_mutex_unlock(&claves_mutex);
-                            fprintf(stderr, "LIST_USERS FAIL\n");
-                            return 3; // BUFFER TOO SMALL
-                        }
-                        buffer += written;
-                        buffer_size -= written;
-                        total_written += written;
-                        count++;
-                    }
-                    fclose(conn_fd);
-                }
+        if (ent->d_type == DT_DIR &&
+            strcmp(ent->d_name, ".") != 0 &&
+            strcmp(ent->d_name, "..") != 0) {
+
+            // Leer connection.txt
+            char conn_path[MAX_PATH];
+            snprintf(conn_path, sizeof(conn_path), "%s/%s/connection.txt", BASE_DIR, ent->d_name);
+            printf("[DEBUG] Intentando abrir: %s\n", conn_path); // <--- Debug añadido
+
+            FILE *conn_fd = fopen(conn_path, "r");
+            if (!conn_fd) {
+                fprintf(stderr, "[WARNING] No se pudo abrir %s\n", conn_path);
+                continue;
             }
+
+            char ip[INET_ADDRSTRLEN];
+            int puerto;
+            if (fscanf(conn_fd, "%s\n%d", ip, &puerto) != 2) {
+                fprintf(stderr, "[WARNING] Formato incorrecto en %s\n", conn_path);
+                fclose(conn_fd);
+                continue;
+            }
+            fclose(conn_fd);
+
+            // Escribir en buffer
+            int written = snprintf(buffer, buffer_size, "%s %s %d\n", ent->d_name, ip, puerto);
+            if (written < 0 || written >= buffer_size) {
+                fprintf(stderr, "[ERROR] LIST_USERS: Buffer lleno (datos)\n");
+                closedir(dir);
+                return -3;
+            }
+
+            buffer += written;
+            buffer_size -= written;
+            total_written += written;
+            count++;
         }
     }
+
     closedir(dir);
-
-    pthread_mutex_unlock(&claves_mutex);
-
-    if (count == 0) {
-        // No hay usuarios conectados, pero la operación fue exitosa
-        return 0;
-    }
-    return 0; // SUCCESS
+    return count;
 }
 
 //lista para ver el contenido de otra personas
 int list_content(const char* requesting_user, const char* target_user, char* buffer, int buffer_size) {
-    pthread_mutex_lock(&claves_mutex);
-
-    // 1. Verificar si el usuario que solicita existe
+    // 1. Verificar usuario que solicita
     if (!user_exists(requesting_user)) {
-        fprintf(stderr, "LIST_USERS FAIL , USER DOES NOT EXIST\n");
-        pthread_mutex_unlock(&claves_mutex);
-        return 1; // USER DOES NOT EXIST (usuario que pide)
+        fprintf(stderr, "[ERROR] LIST_CONTENT: Usuario %s no existe\n", requesting_user);
+        return 1; // Códigos positivos para errores
     }
 
-    // 2. Verificar si el usuario que solicita está conectado
+    // 2. Verificar conexión del solicitante
     if (!is_user_connected(requesting_user)) {
-        fprintf(stderr, "LIST_CONTENT FAIL , USER NOT CONNECTED\n");
-        pthread_mutex_unlock(&claves_mutex);
-        return 2; // USER NOT CONNECTED (usuario que pide)
+        fprintf(stderr, "[ERROR] LIST_CONTENT: Usuario %s no conectado\n", requesting_user);
+        return 2;
     }
 
-    // 3. Verificar si el usuario objetivo existe
+    // 3. Verificar usuario objetivo
     if (!user_exists(target_user)) {
-        fprintf(stderr, "LIST_CONTENT FAIL , REMOTE USER DOES NOT EXIST\n");
-        pthread_mutex_unlock(&claves_mutex);
-        return 3; // REMOTE USER DOES NOT EXIST
+        fprintf(stderr, "[ERROR] LIST_CONTENT: Usuario objetivo %s no existe\n", target_user);
+        return 3;
     }
 
-    // Preparar buffer con encabezado
-    int written = snprintf(buffer, buffer_size, "LIST_CONTENT OK\n");
-    buffer += written;
-    buffer_size -= written;
+    // Preparar buffer con mismo formato que list_users
+    int header_written = snprintf(buffer, buffer_size, "LIST_CONTENT OK\n");
+    if (header_written < 0 || header_written >= buffer_size) {
+        return 4; // Buffer lleno
+    }
+
+    buffer += header_written;
+    buffer_size -= header_written;
     int count = 0;
 
+    // Leer metadata.txt
     char meta_path[MAX_PATH];
     snprintf(meta_path, sizeof(meta_path), "%s/%s/metadata.txt", BASE_DIR, target_user);
 
-    FILE *meta_fd = fopen(meta_path, "r");
+    FILE* meta_fd = fopen(meta_path, "r");
     if (!meta_fd) {
-        fprintf(stderr, "LIST_CONTENT FAIL\n");
-        pthread_mutex_unlock(&claves_mutex);
-        return 4; // OPERATION FAILED
+        return 4; // Error al abrir archivo
     }
 
     char line[MAX_LINE];
     while (fgets(line, sizeof(line), meta_fd) && buffer_size > 0) {
-        char *separator = strchr(line, '|');
-        if (separator) {
-            *separator = '\0'; // Separa nombre y descripción
-            char *filename = line;
-            char *description = separator + 1;
+        char* sep = strchr(line, '|');
+        if (!sep) continue;
 
-            // Eliminar salto de línea de la descripción
-            char *newline = strchr(description, '\n');
-            if (newline) *newline = '\0';
+        *sep = '\0';
+        char* filename = line;
+        char* desc = sep + 1;
 
-            written = snprintf(buffer, buffer_size, "%s: %s\n", filename, description);
-            if (written < 0 || written >= buffer_size) {
-                fclose(meta_fd);
-                fprintf(stderr, "LIST_CONTENT FAIL\n");
-                pthread_mutex_unlock(&claves_mutex);
-                return 4; // BUFFER TOO SMALL
-            }
-            buffer += written;
-            buffer_size -= written;
-            count++;
+        // Eliminar newline
+        char* nl = strchr(desc, '\n');
+        if (nl) *nl = '\0';
+
+        int written = snprintf(buffer, buffer_size, "%s: %s\n", filename, desc);
+        if (written < 0 || written >= buffer_size) {
+            fclose(meta_fd);
+            return count; // Retorna parcialmente lo que llevaba
         }
-    }
-    fclose(meta_fd);
 
-    pthread_mutex_unlock(&claves_mutex);
-    return (count > 0) ? 0 : 0; // 0 = éxito (incluso si count es 0)
+        buffer += written;
+        buffer_size -= written;
+        count++;
+    }
+
+    fclose(meta_fd);
+    return count; // Mismo estilo que list_users: retorna cantidad de elementos
 }
 
 //preparacion para que un cliente tenga todos los datos para pedir el archico al otro
@@ -480,14 +483,12 @@ int prepare_file_transfer(const char* username, const char* filename, char* dato
     // Verificar existencia
     if (!user_exists(username) || access(file_path, F_OK) != 0) {
         fprintf(stderr, "GET_FILE FAIL , FILE NOT EXIST\n");
-        pthread_mutex_unlock(&claves_mutex);
         return 1;
     }
 
     // Leer datos de conexión
     if ((conn_fd = fopen(conn_path, "r")) == NULL) {
         fprintf(stderr, "GET_FILE FAIL\n");
-        pthread_mutex_unlock(&claves_mutex);
         return 2;
     }
 
@@ -497,7 +498,6 @@ int prepare_file_transfer(const char* username, const char* filename, char* dato
     // Leer descripción del archivo
     if ((meta_fd = fopen(meta_path, "r")) == NULL) {
         fprintf(stderr, "GET_FILE FAIL\n");
-        pthread_mutex_unlock(&claves_mutex);
         return 2;
     }
 
@@ -513,6 +513,5 @@ int prepare_file_transfer(const char* username, const char* filename, char* dato
     // Formatear datos de transferencia
     snprintf(datos, 4096, "%s:%d:%s:%s", ip, puerto, filename, desc);
 
-    pthread_mutex_unlock(&claves_mutex);
     return 0;
 }

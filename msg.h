@@ -26,13 +26,16 @@ typedef struct {
     char usuario[MAX_USER];     // 256 bytes
     char nombre_fichero[MAX_FILE]; // 256 bytes
     char descripcion[MAX_DESC]; // 256 bytes
+    char target_user[MAX_USER];     // 256 bytes
     unsigned short puerto;           // 4 bytes (orden de red)
 } peticion;
 #pragma pack(pop)  // Restaura el padding
 
+#pragma pack(push, 1)  // Desactiva el padding
 typedef struct {
     uint8_t codigo;             // 1 bytes
     int32_t num_elementos;      // 4 bytes
     char datos[4096];           // 4096 bytes
 } respuesta;
+#pragma pack(pop)  // Restaura el padding
 #endif

@@ -70,15 +70,17 @@ class client :
                 usuario = user.encode().ljust(256, b'\x00')  # 256 bytes
                 nombre_fichero = b'\x00' * 256  # Campo vacío
                 descripcion = b'\x00' * 256      # Campo vacío
+                target_user = b'\x00' * 256      # Campo vacío
                 puerto = 0                       # No relevante para REGISTER
 
                 # 2. Empaquetar con struct.pack
                 packed_data = struct.pack(
-                    "!B256s256s256si",
+                    "!B256s256s256s256si",
                     operacion,
                     usuario,
                     nombre_fichero,
                     descripcion,
+                    target_user,
                     puerto
                 )
                 
@@ -109,20 +111,22 @@ class client :
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.connect((client._server, client._port))
                 
-                # 1. Preparar datos según la estructura peticion
-                operacion = 1  # OP_UNREGISTER = 1
+                # 1. Preparar datos según estructura peticion
+                operacion = 0  # OP_REGISTER = 0
                 usuario = user.encode().ljust(256, b'\x00')  # 256 bytes
                 nombre_fichero = b'\x00' * 256  # Campo vacío
                 descripcion = b'\x00' * 256      # Campo vacío
-                puerto = 0                        # No relevante
+                target_user = b'\x00' * 256      # Campo vacío
+                puerto = 0                       # No relevante para REGISTER
 
                 # 2. Empaquetar con struct.pack
                 packed_data = struct.pack(
-                    "!B256s256s256si",
+                    "!B256s256s256s256si",
                     operacion,
                     usuario,
                     nombre_fichero,
                     descripcion,
+                    target_user,
                     puerto
                 )
                 
@@ -163,13 +167,15 @@ class client :
             usuario = user.encode().ljust(256, b'\x00')
             nombre_fichero = b'\x00' * 256
             descripcion = b'\x00' * 256
+            target_user = b'\x00' * 256
             puerto_network = port  # 2 bytes
             packed_data = struct.pack(
-                "!B256s256s256sH",  # H = unsigned short (2 bytes)
+                "!B256s256s256s256sH",  # H = unsigned short (2 bytes)
                 operacion,
                 usuario,
                 nombre_fichero,
                 descripcion,
+                target_user,
                 puerto_network
                 )
 
@@ -206,15 +212,17 @@ class client :
             usuario = user.encode().ljust(256, b'\x00')
             nombre_fichero = b'\x00' * 256  # Campo vacío pero necesario
             descripcion = b'\x00' * 256     # Campo vacío pero necesario
+            target_user = b'\x00' * 256
             puerto = 0  # No se usa en disconnect, pero es parte de la estructura
 
             # 2. Empaquetar todos los campos (igual que en connect)
             packed_data = struct.pack(
-                "!B256s256s256sH",  # Mismo formato: B + 3*256s + H
+                "!B256s256s256s256sH",  # Mismo formato: B + 3*256s + H
                 operacion,
                 usuario,
                 nombre_fichero,
                 descripcion,
+                target_user,
                 puerto
             )
 
@@ -257,15 +265,17 @@ class client :
             usuario = client._connected_user.encode().ljust(256, b'\x00')
             nombre_fichero = fileName.encode().ljust(256, b'\x00')
             descripcion_pub = description.encode().ljust(256, b'\x00')
+            target_user = b'\x00' * 256  # Campo vacío pero necesario
             puerto = 0  # No se usa en publish, pero es parte de la estructura
 
             # 2. Empaquetar todos los campos
             packed_data = struct.pack(
-                "!B256s256s256sH",  # Mismo formato: B + 3*256s + H
+                "!B256s256s256s256sH",  # Mismo formato: B + 3*256s + H
                 operacion,
                 usuario,
                 nombre_fichero,
                 descripcion_pub,
+                target_user,
                 puerto
             )
             
@@ -307,15 +317,17 @@ class client :
             usuario = client._connected_user.encode().ljust(256, b'\x00')
             nombre_fichero = fileName.encode().ljust(256, b'\x00')
             descripcion = b'\x00' * 256  # Campo vacío pero necesario
+            target_user = b'\x00' * 256  # Campo vacío pero necesario
             puerto = 0  # No se usa en delete, pero es parte de la estructura
 
             # 2. Empaquetar todos los campos
             packed_data = struct.pack(
-                "!B256s256s256sH",  # Mismo formato: B + 3*256s + H
+                "!B256s256s256s256sH",  # Mismo formato: B + 3*256s + H
                 operacion,
                 usuario,
                 nombre_fichero,
                 descripcion,
+                target_user,
                 puerto
             )
 
@@ -347,62 +359,143 @@ class client :
 
 
     @staticmethod
-
-    def  listusers() :
-
+    def listusers():
         try:
             if not client._connected_user:
                 print("LIST_USERS FAIL, USER NOT CONNECTED")
                 return client.RC.ERROR
 
+            # Preparar datos de la operación
+            operacion = 6  # OP_LIST_USERS
+            usuario = client._connected_user.encode().ljust(256, b'\x00')
+            nombre_fichero = b'\x00' * 256
+            descripcion = b'\x00' * 256
+            target_user = b'\x00' * 256  # Campo vacío pero necesario
+            puerto = 0
+
+            packed_data = struct.pack(
+                "!B256s256s256s256sH",
+                operacion,
+                usuario,
+                nombre_fichero,
+                descripcion,
+                target_user,
+                puerto
+            )
+
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.connect((client._server, client._port))
-                s.sendall(b'LIST_USERS\0' + client._connected_user.encode() + b'\0')
-                response = s.recv(1)
-                if not response or response[0] != 0:
-                    print("LIST_USERS FAIL")
+
+                s.sendall(packed_data)
+
+                # Leer respuesta (1 byte código + 4 bytes num_elementos + 4096 bytes datos)
+                expected_len = 1 + 4 + 4096
+                respuesta_data = b''
+                while len(respuesta_data) < expected_len:
+                    chunk = s.recv(expected_len - len(respuesta_data))
+                    if not chunk:
+                        return client.RC.ERROR
+                    respuesta_data += chunk
+
+                # Extraer campos
+                codigo = respuesta_data[0]
+                num_elementos = int.from_bytes(respuesta_data[1:5], byteorder='big')
+                raw_datos = respuesta_data[5:5+4096]
+
+                # Para ver exactamente qué trozo de datos estás intentando decodificar:
+                try:
+                    datos = raw_datos.split(b'\0', 1)[0].decode('utf-8', errors='ignore')
+                except Exception as e:
+                    print(f"[ERROR] fallo al decodificar datos: {e}")
+                    datos = ""
+
+                if codigo != 0:
+                    print(f"LIST_USERS FAIL (Código: {codigo})")
                     return client.RC.ERROR
 
-                num_users = int(s.recv(1024).split(b'\0')[0].decode())
                 print("LIST_USERS OK")
-                for _ in range(num_users):
-                    user_data = s.recv(1024).split(b'\0')
-                    print("{} {} {}".format(user_data[0].decode(), user_data[1].decode(), user_data[2].decode()))
+                if num_elementos == 0:
+                    print("No hay usuarios conectados")
+                else:
+                    # Parsear datos (formato: "LIST_USERS OK\nuser1 ip puerto\n...")
+                    lines = datos.split('\n')
+                    if lines and lines[0] == "LIST_USERS OK":
+                        for line in lines[1:]:  # Ignorar la cabecera
+                            if line.strip():
+                                print(line)
+                    else:
+                        print("[ERROR] Formato de datos incorrecto")
+
                 return client.RC.OK
+
         except Exception as e:
-            print("LIST_USERS FAIL")
+            print(f"LIST_USERS FAIL: {str(e)}")
             return client.RC.ERROR
 
 
 
     @staticmethod
-
-    def  listcontent(user) :
-
+    def listcontent(user):
         try:
             if not client._connected_user:
                 print("LIST_CONTENT FAIL, USER NOT CONNECTED")
                 return client.RC.ERROR
 
+            # Empaquetar datos como en listusers
+            operacion = 7  # OP_LIST_CONTENT (suponiendo código correcto)
+            usuario = client._connected_user.encode().ljust(256, b'\x00')
+            nombre_fichero = b'\x00' * 256
+            descripcion = b'\x00' * 256
+            target_user = user.encode().ljust(256, b'\x00')
+            puerto = 0
+
+            packed_data = struct.pack(
+                "!B256s256s256s256sH",
+                operacion,
+                usuario,
+                nombre_fichero,
+                descripcion,
+                target_user,
+                puerto
+            )
+
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.connect((client._server, client._port))
-                s.sendall(b'LIST_CONTENT\0' + client._connected_user.encode() + b'\0' + user.encode() + b'\0')
-                response = s.recv(1)
-                code = response[0] if response else 4
-                if code == 0:
-                    num_files = int(s.recv(1024).split(b'\0')[0].decode())
-                    print("LIST_CONTENT OK")
-                    for _ in range(num_files):
-                        file_data = s.recv(1024).split(b'\0')
-                        print("{}: {}".format(file_data[0].decode(), file_data[1].decode()))
-                    return client.RC.OK
-                elif code == 3:
-                    print("LIST_CONTENT FAIL, REMOTE USER DOES NOT EXIST")
+                s.sendall(packed_data)
+
+                # Recibir respuesta estructurada (1 byte código + 4 bytes num_elementos + 4096 datos)
+                respuesta_data = s.recv(1 + 4 + 4096)
+                if len(respuesta_data) < 1 + 4:
+                    print("LIST_CONTENT FAIL (respuesta incompleta)")
+                    return client.RC.ERROR
+
+                codigo = respuesta_data[0]
+                num_elementos = int.from_bytes(respuesta_data[1:5], byteorder='big')
+                datos = respuesta_data[5:5+4096].split(b'\0', 1)[0].decode('utf-8')
+
+                if codigo != 0:
+                    if codigo == 3:
+                        print("LIST_CONTENT FAIL, REMOTE USER DOES NOT EXIST")
+                    else:
+                        print(f"LIST_CONTENT FAIL (Código: {codigo})")
+                    return client.RC.ERROR
+
+                print("LIST_CONTENT OK")
+                if num_elementos == 0:
+                    print("No hay archivos")
                 else:
-                    print("LIST_CONTENT FAIL")
-                return client.RC.ERROR
+                    lines = datos.split('\n')
+                    if lines and lines[0] == "LIST_CONTENT OK":
+                        for line in lines[1:]:
+                            if line.strip():
+                                print(line)
+                    else:
+                        print("[ERROR] Formato incorrecto en datos")
+                
+                return client.RC.OK
+
         except Exception as e:
-            print("LIST_CONTENT FAIL")
+            print(f"LIST_CONTENT FAIL: {str(e)}")
             return client.RC.ERROR
 
 

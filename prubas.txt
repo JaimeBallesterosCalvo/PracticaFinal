@@ -8,10 +8,19 @@ CONNECT usuario2
 DISCONNECT usuario2
 DISCONNECT usuario_no_conectado
 REGISTER usuario3
-PUBLISH /home/usuario1/docs/file2.txt Descripción normal
+PUBLISH /home/usuario1/docs/file2.txt Descripcion normal
 CONNECT usuario3
-PUBLISH /home/usuario1/docs/file2.txt Descripción normal
+PUBLISH /home/usuario1/docs/file2.txt Descripcion normal
 PUBLISH /home/usuario1/docs/file2.txt Duplicado
 DELETE /home/usuario1/docs/file2.txt
+PUBLISH /home/usuario1/docs/file2.txt Descripcion normal
 DELETE archivo_inexistente.txt
+REGISTER Lola
+REGISTER Jaime
+CONNECT Jaime
+LIST_USERS
+PUBLISH /home/jaime/docs/doc1.txt Descripcion uno
+PUBLISH /home/jaime/docs/doc2.txt Descripcion dos
+PUBLISH C:\Users\Jaime\OneDrive\texto.txt hola
+LIST_CONTENT Jaime
 QUIT
