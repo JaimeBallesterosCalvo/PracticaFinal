@@ -8,6 +8,7 @@
 #include "msg.h"
 #include <fcntl.h>
 #include <errno.h>
+#include <ctype.h>
 
 
 #define BASE_DIR "USERS"
@@ -197,7 +198,6 @@ int disconnect_user(const char* username) {
 }
 
 //esta es la acción de publicar un documento
-// Función para publicar un documento (sin crear el archivo físicamente)
 int publish_file(const char* username, const char* filename, const char* descripcion) {
 
     // 1. Verificar si el usuario existe
@@ -354,7 +354,6 @@ int list_users(const char* requesting_user, char* buffer, int buffer_size) {
 
     // 5. Leer usuarios
     while ((ent = readdir(dir)) != NULL && buffer_size > 0) {
-        printf("[DEBUG] Procesando entrada: %s\n", ent->d_name); // <--- Debug añadido
 
         if (ent->d_type == DT_DIR &&
             strcmp(ent->d_name, ".") != 0 &&
@@ -363,7 +362,6 @@ int list_users(const char* requesting_user, char* buffer, int buffer_size) {
             // Leer connection.txt
             char conn_path[MAX_PATH];
             snprintf(conn_path, sizeof(conn_path), "%s/%s/connection.txt", BASE_DIR, ent->d_name);
-            printf("[DEBUG] Intentando abrir: %s\n", conn_path); // <--- Debug añadido
 
             FILE *conn_fd = fopen(conn_path, "r");
             if (!conn_fd) {
@@ -400,42 +398,41 @@ int list_users(const char* requesting_user, char* buffer, int buffer_size) {
 }
 
 //lista para ver el contenido de otra personas
-int list_content(const char* requesting_user, const char* target_user, char* buffer, int buffer_size) {
+int list_content(const char* requesting_user,
+                 const char* target_user,
+                 char* buffer,
+                 int buffer_size) {
     // 1. Verificar usuario que solicita
     if (!user_exists(requesting_user)) {
         fprintf(stderr, "[ERROR] LIST_CONTENT: Usuario %s no existe\n", requesting_user);
-        return 1; // Códigos positivos para errores
+        return -1;
     }
-
     // 2. Verificar conexión del solicitante
     if (!is_user_connected(requesting_user)) {
         fprintf(stderr, "[ERROR] LIST_CONTENT: Usuario %s no conectado\n", requesting_user);
-        return 2;
+        return -2;
     }
-
     // 3. Verificar usuario objetivo
     if (!user_exists(target_user)) {
         fprintf(stderr, "[ERROR] LIST_CONTENT: Usuario objetivo %s no existe\n", target_user);
-        return 3;
+        return -3;
     }
 
-    // Preparar buffer con mismo formato que list_users
-    int header_written = snprintf(buffer, buffer_size, "LIST_CONTENT OK\n");
-    if (header_written < 0 || header_written >= buffer_size) {
-        return 4; // Buffer lleno
-    }
+    // Encabezado
+    int written = snprintf(buffer, buffer_size, "LIST_CONTENT OK\n");
+    if (written < 0 || written >= buffer_size) return 4;
+    buffer     += written;
+    buffer_size-= written;
 
-    buffer += header_written;
-    buffer_size -= header_written;
     int count = 0;
-
-    // Leer metadata.txt
     char meta_path[MAX_PATH];
-    snprintf(meta_path, sizeof(meta_path), "%s/%s/metadata.txt", BASE_DIR, target_user);
+    snprintf(meta_path, sizeof(meta_path),
+             "%s/%s/metadata.txt", BASE_DIR, target_user);
 
     FILE* meta_fd = fopen(meta_path, "r");
     if (!meta_fd) {
-        return 4; // Error al abrir archivo
+        fprintf(stderr, "[ERROR] LIST_CONTENT: No se pudo abrir %s\n", meta_path);
+        return 4;
     }
 
     char line[MAX_LINE];
@@ -445,73 +442,23 @@ int list_content(const char* requesting_user, const char* target_user, char* buf
 
         *sep = '\0';
         char* filename = line;
-        char* desc = sep + 1;
+        char* desc     = sep + 1;
 
-        // Eliminar newline
+        // Quitar '\n' de la descripción
         char* nl = strchr(desc, '\n');
         if (nl) *nl = '\0';
 
-        int written = snprintf(buffer, buffer_size, "%s: %s\n", filename, desc);
+        // Escribir al buffer
+        written = snprintf(buffer, buffer_size, "%s\n", filename);
         if (written < 0 || written >= buffer_size) {
             fclose(meta_fd);
-            return count; // Retorna parcialmente lo que llevaba
+            return count;  // devolvemos lo acumulado
         }
-
-        buffer += written;
+        buffer      += written;
         buffer_size -= written;
         count++;
     }
 
     fclose(meta_fd);
-    return count; // Mismo estilo que list_users: retorna cantidad de elementos
-}
-
-//preparacion para que un cliente tenga todos los datos para pedir el archico al otro
-int prepare_file_transfer(const char* username, const char* filename, char* datos) {
-    pthread_mutex_lock(&claves_mutex);
-
-    // Obtener info de conexión
-    char conn_path[MAX_PATH], meta_path[MAX_PATH], file_path[MAX_PATH];
-    FILE *conn_fd, *meta_fd;
-    int puerto;
-    char ip[INET_ADDRSTRLEN];
-
-    snprintf(conn_path, sizeof(conn_path), "%s/%s/connection.txt", BASE_DIR, username);
-    snprintf(meta_path, sizeof(meta_path), "%s/%s/metadata.txt", BASE_DIR, username);
-    snprintf(file_path, sizeof(file_path), "%s/%s/%s", BASE_DIR, username, filename);
-
-    // Verificar existencia
-    if (!user_exists(username) || access(file_path, F_OK) != 0) {
-        fprintf(stderr, "GET_FILE FAIL , FILE NOT EXIST\n");
-        return 1;
-    }
-
-    // Leer datos de conexión
-    if ((conn_fd = fopen(conn_path, "r")) == NULL) {
-        fprintf(stderr, "GET_FILE FAIL\n");
-        return 2;
-    }
-
-    fscanf(conn_fd, "%s\n%d", ip, &puerto);
-    fclose(conn_fd);
-
-    // Leer descripción del archivo
-    if ((meta_fd = fopen(meta_path, "r")) == NULL) {
-        fprintf(stderr, "GET_FILE FAIL\n");
-        return 2;
-    }
-
-    char line[MAX_LINE], desc[MAX_DESC] = "";
-    while (fgets(line, sizeof(line), meta_fd)) {
-        char current_file[MAX_FILE];
-        if (sscanf(line, "%[^|]|%[^\n]", current_file, desc) == 2) {
-            if (strcmp(current_file, filename) == 0) break;
-        }
-    }
-    fclose(meta_fd);
-
-    // Formatear datos de transferencia
-    snprintf(datos, 4096, "%s:%d:%s:%s", ip, puerto, filename, desc);
-
-    return 0;
+    return count;
 }

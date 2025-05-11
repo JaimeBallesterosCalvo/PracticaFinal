@@ -47,7 +47,6 @@ void *atender_cliente(void *arg) {
         case OP_DELETE:      op_str = "DELETE"; break;
         case OP_LIST_USERS:  op_str = "LIST_USERS"; break;
         case OP_LIST_CONTENT:op_str = "LIST_CONTENT"; break;
-        case OP_GET_FILE:   op_str = "GET_FILE"; break;
         default:             op_str = "UNKNOWN"; break;
     }
 
@@ -144,15 +143,6 @@ void *atender_cliente(void *arg) {
                 r.codigo = 0;
                 r.num_elementos = htonl(content_count);
                 fprintf(stdout, "LIST_CONTENT OK\n");
-            }
-            pthread_mutex_unlock(&claves_mutex);
-            break;
-
-        case OP_GET_FILE:
-            pthread_mutex_lock(&claves_mutex);
-            r.codigo = prepare_file_transfer(p.usuario, p.nombre_fichero, r.datos);
-            if (r.codigo != 0) {
-                fprintf(stderr, "Error en prepare_file_transfer()\n");
             }
             pthread_mutex_unlock(&claves_mutex);
             break;

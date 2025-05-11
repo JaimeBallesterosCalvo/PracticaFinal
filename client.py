@@ -37,19 +37,19 @@ class client :
         LIST_CONTENT = 7
         GET_FILE = 8
 
+    
+
+    
     # ****************** ATTRIBUTES ******************
-
     _server = None
-
     _port = -1
-
     _connected_user = None
-
     _listen_port = None
-
     _server_socket = None
-
     _listener_thread = None
+    _listening_socket = None
+    _listening_thread = None
+    _stop_listening = False
 
 
 
@@ -84,7 +84,7 @@ class client :
                     puerto
                 )
                 
-                # 4. Enviar y recibir respuesta
+                # 3. Enviar y recibir respuesta
                 s.sendall(packed_data)
                 response = s.recv(1)
                 code = response[0] if response else 2
@@ -108,43 +108,51 @@ class client :
     @staticmethod
     def unregister(user):
         try:
+            # 1. Enviar petición UNREGISTER al servidor (código existente)
+            operacion = 1  # OP_UNREGISTER
+            usuario = user.encode().ljust(256, b'\x00')
+            nombre_fichero = b'\x00' * 256
+            descripcion = b'\x00' * 256
+            target_user = b'\x00' * 256
+            puerto = 0
+
+            packed_data = struct.pack(
+                "!B256s256s256s256sH",
+                operacion,
+                usuario,
+                nombre_fichero,
+                descripcion,
+                target_user,
+                puerto
+            )
+
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.connect((client._server, client._port))
-                
-                # 1. Preparar datos según estructura peticion
-                operacion = 0  # OP_REGISTER = 0
-                usuario = user.encode().ljust(256, b'\x00')  # 256 bytes
-                nombre_fichero = b'\x00' * 256  # Campo vacío
-                descripcion = b'\x00' * 256      # Campo vacío
-                target_user = b'\x00' * 256      # Campo vacío
-                puerto = 0                       # No relevante para REGISTER
-
-                # 2. Empaquetar con struct.pack
-                packed_data = struct.pack(
-                    "!B256s256s256s256si",
-                    operacion,
-                    usuario,
-                    nombre_fichero,
-                    descripcion,
-                    target_user,
-                    puerto
-                )
-                
-                # 3. Enviar y recibir respuesta
                 s.sendall(packed_data)
                 response = s.recv(1)
                 code = response[0] if response else 2
-                if code == 0:
-                    print("UNREGISTER OK")
-                    return client.RC.OK
-                elif code == 1:
-                    print("USER DOES NOT EXIST")
-                    return client.RC.USER_ERROR
-                else:
-                    print("UNREGISTER FAIL")
-                    return client.RC.ERROR
+
+            # 2. Cerrar socket de escucha y detener hilo
+            if hasattr(client, '_listening_socket') and client._listening_socket:
+                client._stop_listening = True
+                client._listening_socket.close()
+                if client._listening_thread:
+                    client._listening_thread.join()
+                client._listening_socket = None
+
+            # 3. Manejar respuesta del servidor
+            if code == 0:
+                print("UNREGISTER OK")
+                return client.RC.OK
+            elif code == 1:
+                print("USER DOES NOT EXIST")
+                return client.RC.USER_ERROR
+            else:
+                print("UNREGISTER FAIL")
+                return client.RC.ERROR
+
         except Exception as e:
-            print("UNREGISTER FAIL")
+            print(f"UNREGISTER FAIL")
             return client.RC.ERROR
 
 
@@ -156,46 +164,111 @@ class client :
     @staticmethod
     def connect(user):
         try:
-            # 1. Obtener puerto disponible
-            temp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            temp_sock.bind(('', 0))
-            port = temp_sock.getsockname()[1]
-            temp_sock.close()
+            # Cerrar socket existente si hay uno activo
+            if client._listening_socket:
+                client._stop_listening = True
+                client._listening_socket.close()
+                client._listening_thread.join()
+            # 1. Crear socket de escucha y obtener puerto
+            client._listening_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            client._listening_socket.bind(('', 0))
+            port = client._listening_socket.getsockname()[1]
+            client._listening_socket.listen(5)
+            client._stop_listening = False  # Resetear bandera
 
-            # 2. Preparar datos de la petición
+            # 2. Iniciar hilo de escucha en segundo plano
+            def listen_for_transfers():
+                while not client._stop_listening:
+                    try:
+                        conn, addr = client._listening_socket.accept()
+                        # 1. Recibir datos empaquetados (operación 8)
+                        data = conn.recv(1024)
+                        
+                        # 2. Desempaquetar (formato debe coincidir con el del cliente)
+                        try:
+                            unpacked = struct.unpack("!B256s256s", data[:513])  # 1B + 256s + 256s
+                            operacion, usuario, nombre_fichero = unpacked
+                            usuario = usuario.decode().strip('\x00')
+                            nombre_fichero = nombre_fichero.decode().strip('\x00')
+                        except Exception as e:
+                            print(f"[PEER ERROR] Fallo al desempaquetar: {e}")
+                            conn.sendall(bytes([2]))  # Código de error
+                            conn.close()
+                            continue
+
+                        # 3. Verificar operación GET_FILE (código 8)
+                        if operacion == 8:
+                            # 4. Buscar archivo localmente
+                            if os.path.exists(nombre_fichero):
+                                # Enviar código de éxito (0)
+                                conn.sendall(bytes([0]))
+                                # Enviar tamaño del archivo seguido de \0
+                                file_size = os.path.getsize(nombre_fichero)
+                                conn.sendall(str(file_size).encode() + b'\x00')
+                                # Enviar contenido del archivo
+                                with open(nombre_fichero, 'rb') as f:
+                                    conn.sendall(f.read())
+                            else:
+                                # Enviar código de error (1 = archivo no existe)
+                                conn.sendall(bytes([1]))
+                        else:
+                            # Operación no soportada
+                            conn.sendall(bytes([2]))
+                        conn.close()
+                    except (OSError, ConnectionAbortedError) as e:
+                        break
+
+            import threading
+            client._listening_thread = threading.Thread(target=listen_for_transfers)
+            client._listening_thread.daemon = True
+            client._listening_thread.start()
+
+            # 3. Enviar petición CONNECT al servidor
             operacion = 2  # OP_CONNECT
             usuario = user.encode().ljust(256, b'\x00')
             nombre_fichero = b'\x00' * 256
             descripcion = b'\x00' * 256
             target_user = b'\x00' * 256
-            puerto_network = port  # 2 bytes
+            puerto_network = port
+
             packed_data = struct.pack(
-                "!B256s256s256s256sH",  # H = unsigned short (2 bytes)
+                "!B256s256s256s256sH",
                 operacion,
                 usuario,
                 nombre_fichero,
                 descripcion,
                 target_user,
                 puerto_network
-                )
+            )
 
-            # 4. Enviar al servidor
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.connect((client._server, client._port))
                 s.sendall(packed_data)
                 response = s.recv(1)
                 code = response[0] if response else 3
-                
+
                 if code == 0:
                     client._connected_user = user
                     print("CONNECT OK")
                     return client.RC.OK
+                elif code == 1:
+                    print("CONNECT FAIL, USER DOES NOT EXIST")
+                    return client.RC.USER_ERROR
+                elif code == 2:
+                    print("USER ALREADY CONNECTED")
+                    return client.RC.ERROR
                 else:
+                    # Si falla, cerrar socket de escucha
+                    client._stop_listening = True
+                    client._listening_socket.close()
                     print("CONNECT FAIL")
                     return client.RC.ERROR
 
         except Exception as e:
-            print(f"CONNECT FAIL: {str(e)}")
+            print(f"CONNECT FAIL")
+            if client._listening_socket:
+                client._stop_listening = True
+                client._listening_socket.close()
             return client.RC.ERROR
 
 
@@ -234,9 +307,7 @@ class client :
                 code = response[0] if response else 3
 
                 if code == 0:
-                    if client._server_socket:
-                        client._server_socket.close()
-                        client._listener_thread = None
+                    # Eliminar referencia a _server_socket (no usado)
                     client._connected_user = None
                     print("DISCONNECT OK")
                     return client.RC.OK
@@ -248,7 +319,7 @@ class client :
                     print("DISCONNECT FAIL")
                 return client.RC.ERROR
         except Exception as e:
-            print(f"DISCONNECT FAIL: {str(e)}")
+            print(f"DISCONNECT FAIL")
             return client.RC.ERROR
 
 
@@ -258,6 +329,25 @@ class client :
         try:
             if not client._connected_user:
                 print("PUBLISH FAIL, USER NOT CONNECTED")
+                return client.RC.ERROR
+            
+            # Validación de longitud en el cliente antes de enviar
+            try:
+                fileName_bytes = fileName.encode()
+                description_bytes = description.encode()
+
+                # Comprobar longitud del nombre de archivo
+                if len(fileName_bytes) > 256:
+                    print("PUBLISH FAIL")
+                    return client.RC.ERROR
+
+                # Comprobar longitud de la descripción
+                if len(description_bytes) > 256:
+                    print("PUBLISH FAIL")
+                    return client.RC.ERROR
+
+            except UnicodeEncodeError:
+                print("PUBLISH FAIL")
                 return client.RC.ERROR
 
             # 1. Preparar datos de la petición (misma estructura que connect/disconnect)
@@ -300,7 +390,7 @@ class client :
                 return client.RC.ERROR
 
         except Exception as e:
-            print(f"PUBLISH FAIL: {str(e)}")
+            print(f"PUBLISH FAIL")
             return client.RC.ERROR
 
 
@@ -310,6 +400,19 @@ class client :
         try:
             if not client._connected_user:
                 print("DELETE FAIL, USER NOT CONNECTED")
+                return client.RC.ERROR
+            
+            # Validación de longitud en el cliente antes de enviar
+            try:
+                fileName_bytes = fileName.encode()
+
+                # Comprobar longitud del nombre de archivo
+                if len(fileName_bytes) > 256:
+                    print("DELETE FAIL")
+                    return client.RC.ERROR
+
+            except UnicodeEncodeError:
+                print("PUBLISH FAIL")
                 return client.RC.ERROR
 
             # 1. Preparar datos de la petición (misma estructura)
@@ -362,9 +465,9 @@ class client :
     def listusers():
         try:
             if not client._connected_user:
-                print("LIST_USERS FAIL, USER NOT CONNECTED")
+                print("LIST_CONTENT FAIL, USER NOT CONNECTED")
                 return client.RC.ERROR
-
+        
             # Preparar datos de la operación
             operacion = 6  # OP_LIST_USERS
             usuario = client._connected_user.encode().ljust(256, b'\x00')
@@ -406,30 +509,38 @@ class client :
                 try:
                     datos = raw_datos.split(b'\0', 1)[0].decode('utf-8', errors='ignore')
                 except Exception as e:
-                    print(f"[ERROR] fallo al decodificar datos: {e}")
+                    print(f"LIST_USERS FAIL")
                     datos = ""
 
-                if codigo != 0:
-                    print(f"LIST_USERS FAIL (Código: {codigo})")
+                if codigo == 0:
+                    print("LIST_USERS OK")
+                    if num_elementos == 0:
+                        print("No hay usuarios conectados")
+                    else:
+                        # Parsear datos (formato: "LIST_USERS OK\nuser1 ip puerto\n...")
+                        lines = datos.split('\n')
+                        if lines and lines[0] == "LIST_USERS OK":
+                            for line in lines[1:]:  # Ignorar la cabecera
+                                if line.strip():
+                                    print(line)
+                        else:
+                            print(f"LIST_USERS FAIL")
+
+                    return client.RC.OK
+                elif codigo == 1:
+                    print("LIST_USERS FAIL , USER DOES NOT EXIST")
                     return client.RC.ERROR
 
-                print("LIST_USERS OK")
-                if num_elementos == 0:
-                    print("No hay usuarios conectados")
-                else:
-                    # Parsear datos (formato: "LIST_USERS OK\nuser1 ip puerto\n...")
-                    lines = datos.split('\n')
-                    if lines and lines[0] == "LIST_USERS OK":
-                        for line in lines[1:]:  # Ignorar la cabecera
-                            if line.strip():
-                                print(line)
-                    else:
-                        print("[ERROR] Formato de datos incorrecto")
+                elif codigo == 2:
+                    print("LIST_USERS FAIL , USER NOT CONNECTED")
+                    return client.RC.ERROR
 
-                return client.RC.OK
+                else:
+                    print("LIST_USERS FAIL")
+                    return client.RC.ERROR
 
         except Exception as e:
-            print(f"LIST_USERS FAIL: {str(e)}")
+            print(f"LIST_USERS FAIL")
             return client.RC.ERROR
 
 
@@ -466,7 +577,7 @@ class client :
                 # Recibir respuesta estructurada (1 byte código + 4 bytes num_elementos + 4096 datos)
                 respuesta_data = s.recv(1 + 4 + 4096)
                 if len(respuesta_data) < 1 + 4:
-                    print("LIST_CONTENT FAIL (respuesta incompleta)")
+                    print("LIST_CONTENT FAIL")
                     return client.RC.ERROR
 
                 codigo = respuesta_data[0]
@@ -477,7 +588,7 @@ class client :
                     if codigo == 3:
                         print("LIST_CONTENT FAIL, REMOTE USER DOES NOT EXIST")
                     else:
-                        print(f"LIST_CONTENT FAIL (Código: {codigo})")
+                        print(f"LIST_CONTENT FAIL")
                     return client.RC.ERROR
 
                 print("LIST_CONTENT OK")
@@ -486,72 +597,146 @@ class client :
                 else:
                     lines = datos.split('\n')
                     if lines and lines[0] == "LIST_CONTENT OK":
+                        # Saltar la primera línea ("LIST_CONTENT OK") 
+                        # y mostrar solo los nombres de fichero
                         for line in lines[1:]:
                             if line.strip():
-                                print(line)
+                                print(line.strip())  # Elimina espacios en blanco alrededor
                     else:
-                        print("[ERROR] Formato incorrecto en datos")
+                        print("LIST_CONTENT FAIL")
                 
                 return client.RC.OK
 
         except Exception as e:
-            print(f"LIST_CONTENT FAIL: {str(e)}")
+            print(f"LIST_CONTENT FAIL")
             return client.RC.ERROR
 
 
 
     @staticmethod
-
-    def  getfile(user,  remote_FileName,  local_FileName) :
-
+    def getfile(user, remote_file_name, local_file_name):
         try:
-            # Get user info via LIST_USERS
+            # Paso 1: Obtener IP y puerto del usuario objetivo usando LIST_USERS
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.connect((client._server, client._port))
-                s.sendall(b'LIST_USERS\0' + client._connected_user.encode() + b'\0')
+                
+                # Empaquetar petición LIST_USERS según protocolo
+                operacion = 6  # OP_LIST_USERS
+                usuario = client._connected_user.encode().ljust(256, b'\x00')
+                nombre_fichero = b'\x00' * 256
+                descripcion = b'\x00' * 256
+                target_user = b'\x00' * 256  # Campo vacío pero necesario
+                puerto = 0
+
+                packed_data = struct.pack(
+                    "!B256s256s256s256sH",
+                    operacion,
+                    usuario,
+                    nombre_fichero,
+                    descripcion,
+                    target_user,
+                    puerto
+                )
+                s.sendall(packed_data)
+                
+                
+                 # Leer respuesta
                 response = s.recv(1)
-                if not response or response[0] != 0:
+                if response[0] != 0:
                     print("GET_FILE FAIL")
                     return client.RC.ERROR
+                
+                # Leer número de usuarios y datos (igual que en listusers)
+                num_users = int.from_bytes(s.recv(4), byteorder='big')
 
-                num_users = int(s.recv(1024).split(b'\0')[0].decode())
-                target = None
-                for _ in range(num_users):
-                    data = s.recv(1024).split(b'\0')
-                    if data[0].decode() == user:
-                        target = (data[1].decode(), int(data[2].decode()))
-                        break
-                if not target:
-                    print("USER NOT FOUND")
+                # Leer 4096 bytes de datos (como en listusers)
+                raw_data = s.recv(4096)
+
+                # Decodificar y procesar igual que listusers
+                try:
+                    data_str = raw_data.split(b'\0', 1)[0].decode('utf-8', errors='ignore')
+                except Exception as e:
+                    return client.RC.ERROR
+
+                lines = data_str.split('\n')
+                
+                target_ip, target_port = None, None
+                if lines and lines[0] == "LIST_USERS OK":
+                    for line in lines[1:]:  # Ignorar cabecera
+                        if line.strip() == "":
+                            continue
+                        parts = line.split()
+                        if len(parts) < 3:
+                            continue
+                        current_user, ip, port_str = parts[0], parts[1], parts[2]
+                        if current_user == user:
+                            target_ip = ip
+                            target_port = int(port_str)
+                            break
+                
+                if not target_ip:
+                    print(f"GET_FILE FAIL)")
                     return client.RC.USER_ERROR
 
-            # Connect to target user
+            # Paso 2: Conectar al cliente objetivo y solicitar archivo
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as fs:
-                fs.connect(target)
-                fs.sendall(b'GET_FILE\0' + remote_file.encode() + b'\0')
-                response = fs.recv(1)
-                if not response or response[0] != 0:
-                    print("GET_FILE FAIL")
-                    return client.RC.ERROR
+                fs.connect((target_ip, target_port))
+                # Enviar comando GET FILE con formato empaquetado
+                # Enviar comando GET FILE con formato empaquetado CORREGIDO
+                operacion = 8  # Código 8
+                usuario = client._connected_user.encode().ljust(256, b'\x00')
+                nombre_fichero = remote_file_name.encode().ljust(256, b'\x00')
 
-                size = int(fs.recv(1024).split(b'\0')[0].decode())
+                # !B (1 byte) + 256s (usuario) + 256s (nombre_fichero)
+                packed_data = struct.pack(
+                    "!B256s256s",  # <-- Solo los campos necesarios
+                    operacion,
+                    usuario,
+                    nombre_fichero
+                )
+                fs.sendall(packed_data)
+                
+                # Leer código de respuesta
+                response_code = fs.recv(1)
+                if not response_code or response_code[0] != 0:
+                    if response_code and response_code[0] == 1:
+                        print("GET_FILE FAIL (Archivo no existe)")
+                    else:
+                        print("GET_FILE FAIL , FILE NOT EXIST")
+                    return client.RC.ERROR
+                
+                # Leer tamaño del archivo (cadena hasta \0)
+                size_buffer = b''
+                while True:
+                    chunk = fs.recv(1)
+                    if chunk == b'\0':
+                        break
+                    size_buffer += chunk
+                file_size = int(size_buffer.decode())
+                
+                # Recibir contenido del archivo
                 received = 0
-                with open(local_file, 'wb') as f:
-                    while received < size:
-                        data = fs.recv(min(4096, size - received))
+                with open(local_file_name, 'wb') as f:
+                    while received < file_size:
+                        data = fs.recv(min(4096, file_size - received))
                         if not data:
                             break
                         f.write(data)
                         received += len(data)
-                if received == size:
+                
+                # Verificar integridad
+                if received == file_size:
                     print("GET_FILE OK")
                     return client.RC.OK
                 else:
-                    os.remove(local_file)
+                    os.remove(local_file_name)
                     print("GET_FILE FAIL")
                     return client.RC.ERROR
+
         except Exception as e:
-            print("GET_FILE FAIL")
+            print(f"GET_FILE FAIL: {str(e)}")
+            if os.path.exists(local_file_name):
+                os.remove(local_file_name)
             return client.RC.ERROR
 
 

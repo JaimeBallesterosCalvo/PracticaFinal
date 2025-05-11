@@ -17,7 +17,6 @@ typedef enum {
     OP_DELETE,        // 5
     OP_LIST_USERS,    // 6
     OP_LIST_CONTENT,  // 7
-    OP_GET_FILE       // 8
 } p2p_operation;
 
 #pragma pack(push, 1)  // Desactiva el padding
