@@ -51,7 +51,7 @@ void *atender_cliente(void *arg) {
     }
 
     // Mostrar operación y usuario
-    printf("OPERATION %s FROM %s\n", op_str, p.usuario);
+    printf("OPERATION %s FROM %s %s\n", op_str, p.usuario, p.fecha);
     fflush(stdout);
 
     // 2. Obtener IP del cliente para mandarla en algún lado

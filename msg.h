@@ -7,6 +7,7 @@
 #define MAX_USER 256
 #define MAX_FILE 256
 #define MAX_DESC 256
+#define MAX_FECHA 20
 
 typedef enum {
     OP_REGISTER,      // 0
@@ -26,6 +27,7 @@ typedef struct {
     char nombre_fichero[MAX_FILE]; // 256 bytes
     char descripcion[MAX_DESC]; // 256 bytes
     char target_user[MAX_USER];     // 256 bytes
+    char fecha[MAX_FECHA];     // 20 bytes
     unsigned short puerto;           // 4 bytes (orden de red)
 } peticion;
 #pragma pack(pop)  // Restaura el padding
