@@ -815,14 +815,16 @@ class client :
 
 
 
+                    # Modificación en el caso CONNECT
                     elif(line[0]=="CONNECT") :
-
                         if (len(line) == 2) :
-
-                            client.connect(line[1])
-
+                            new_user = line[1]
+                            # Desconectar si ya está conectado con otro usuario
+                            if client._connected_user is not None and client._connected_user != new_user:
+                                client.disconnect(client._connected_user)
+                            # Conectar al nuevo usuario
+                            client.connect(new_user)
                         else :
-
                             print("Syntax error. Usage: CONNECT <userName>")
 
                     
