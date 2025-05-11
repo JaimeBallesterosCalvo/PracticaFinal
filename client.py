@@ -5,7 +5,14 @@ import os
 import threading
 import struct
 from enum import Enum
+import requests
 
+def obtener_fecha_hora():
+    try:
+        r = requests.get("http://127.0.0.1:8000/get_time")
+        return r.text.strip()
+    except:
+        return "00/00/0000 00:00:00"
 
 
 class client :
@@ -71,16 +78,18 @@ class client :
                 nombre_fichero = b'\x00' * 256  # Campo vacío
                 descripcion = b'\x00' * 256      # Campo vacío
                 target_user = b'\x00' * 256      # Campo vacío
+                fecha = obtener_fecha_hora().encode().ljust(20, b'\x00')
                 puerto = 0                       # No relevante para REGISTER
 
                 # 2. Empaquetar con struct.pack
                 packed_data = struct.pack(
-                    "!B256s256s256s256si",
+                    "!B256s256s256s256s20sH",
                     operacion,
                     usuario,
                     nombre_fichero,
                     descripcion,
                     target_user,
+                    fecha,
                     puerto
                 )
                 
@@ -117,16 +126,18 @@ class client :
                 nombre_fichero = b'\x00' * 256  # Campo vacío
                 descripcion = b'\x00' * 256      # Campo vacío
                 target_user = b'\x00' * 256      # Campo vacío
+                fecha = obtener_fecha_hora().encode().ljust(20, b'\x00')
                 puerto = 0                       # No relevante para REGISTER
 
                 # 2. Empaquetar con struct.pack
                 packed_data = struct.pack(
-                    "!B256s256s256s256si",
+                    "!B256s256s256s256s20sH",
                     operacion,
                     usuario,
                     nombre_fichero,
                     descripcion,
                     target_user,
+                    fecha,
                     puerto
                 )
                 
@@ -168,14 +179,17 @@ class client :
             nombre_fichero = b'\x00' * 256
             descripcion = b'\x00' * 256
             target_user = b'\x00' * 256
+            fecha = obtener_fecha_hora().encode().ljust(20, b'\x00')
             puerto_network = port  # 2 bytes
+
             packed_data = struct.pack(
-                "!B256s256s256s256sH",  # H = unsigned short (2 bytes)
+                "!B256s256s256s256s20sH",  # H = unsigned short (2 bytes)
                 operacion,
                 usuario,
                 nombre_fichero,
                 descripcion,
                 target_user,
+                fecha,
                 puerto_network
                 )
 
@@ -213,16 +227,18 @@ class client :
             nombre_fichero = b'\x00' * 256  # Campo vacío pero necesario
             descripcion = b'\x00' * 256     # Campo vacío pero necesario
             target_user = b'\x00' * 256
+            fecha = obtener_fecha_hora().encode().ljust(20, b'\x00')
             puerto = 0  # No se usa en disconnect, pero es parte de la estructura
 
             # 2. Empaquetar todos los campos (igual que en connect)
             packed_data = struct.pack(
-                "!B256s256s256s256sH",  # Mismo formato: B + 3*256s + H
+                "!B256s256s256s256s20sH",  # Mismo formato: B + 3*256s + H
                 operacion,
                 usuario,
                 nombre_fichero,
                 descripcion,
                 target_user,
+                fecha,
                 puerto
             )
 
@@ -266,16 +282,18 @@ class client :
             nombre_fichero = fileName.encode().ljust(256, b'\x00')
             descripcion_pub = description.encode().ljust(256, b'\x00')
             target_user = b'\x00' * 256  # Campo vacío pero necesario
+            fecha = obtener_fecha_hora().encode().ljust(20, b'\x00')
             puerto = 0  # No se usa en publish, pero es parte de la estructura
 
             # 2. Empaquetar todos los campos
             packed_data = struct.pack(
-                "!B256s256s256s256sH",  # Mismo formato: B + 3*256s + H
+                "!B256s256s256s256s20sH",  # Mismo formato: B + 3*256s + H
                 operacion,
                 usuario,
                 nombre_fichero,
                 descripcion_pub,
                 target_user,
+                fecha,
                 puerto
             )
             
@@ -318,16 +336,18 @@ class client :
             nombre_fichero = fileName.encode().ljust(256, b'\x00')
             descripcion = b'\x00' * 256  # Campo vacío pero necesario
             target_user = b'\x00' * 256  # Campo vacío pero necesario
+            fecha = obtener_fecha_hora().encode().ljust(20, b'\x00')
             puerto = 0  # No se usa en delete, pero es parte de la estructura
 
             # 2. Empaquetar todos los campos
             packed_data = struct.pack(
-                "!B256s256s256s256sH",  # Mismo formato: B + 3*256s + H
+                "!B256s256s256s256s20sH",  # Mismo formato: B + 3*256s + H
                 operacion,
                 usuario,
                 nombre_fichero,
                 descripcion,
                 target_user,
+                fecha,
                 puerto
             )
 
@@ -371,15 +391,17 @@ class client :
             nombre_fichero = b'\x00' * 256
             descripcion = b'\x00' * 256
             target_user = b'\x00' * 256  # Campo vacío pero necesario
+            fecha = obtener_fecha_hora().encode().ljust(20, b'\x00')
             puerto = 0
 
             packed_data = struct.pack(
-                "!B256s256s256s256sH",
+                "!B256s256s256s256s20sH",
                 operacion,
                 usuario,
                 nombre_fichero,
                 descripcion,
                 target_user,
+                fecha, 
                 puerto
             )
 
@@ -447,15 +469,17 @@ class client :
             nombre_fichero = b'\x00' * 256
             descripcion = b'\x00' * 256
             target_user = user.encode().ljust(256, b'\x00')
+            fecha = obtener_fecha_hora().encode().ljust(20, b'\x00')
             puerto = 0
 
             packed_data = struct.pack(
-                "!B256s256s256s256sH",
+                "!B256s256s256s256s20sH",
                 operacion,
                 usuario,
                 nombre_fichero,
                 descripcion,
                 target_user,
+                fecha,
                 puerto
             )
 
